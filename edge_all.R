@@ -1,6 +1,8 @@
 library(dplyr)
 library(ggplot2)
 library(tidyr)
+library(binom)
+library(corrplot)
 
 data_orig0 = read.csv('edge1.1.csv') %>% 
   select(-starts_with('dummy')) %>%

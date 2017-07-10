@@ -1,13 +1,14 @@
 ## Measurements at thread level
-
 pop_discipline = data_orig0 %>%
   group_by(Id) %>%
   arrange(desc(PreviousContributions)) %>%
   filter(row_number()==1) %>%
   ungroup() %>%
   group_by(Discipline) %>%
-  summarize(DisciplinePopSize = n()) %>%
+  summarize(DisciplinePopSize = n(),
+            FractionFemale = sum(Female,na.rm=TRUE)/sum(Male + Female, na.rm=TRUE)) %>%
   mutate(DisciplinePopSize = DisciplinePopSize/sum(DisciplinePopSize)) 
+
 # Counting participants by discipline in each thread
 
 thread_pop = data_orig0 %>%
@@ -29,7 +30,7 @@ thread_overrep = thread_pop %>%
 
 thread_underrep = thread_pop %>%
   group_by(ThreadId) %>%
-  mutate(UnderRep = binom.confint(n,sum(n),methods='wilson')$lower > DisciplinePopSize,
+  mutate(UnderRep = binom.confint(n,sum(n),methods='wilson')$upper < DisciplinePopSize,
          Discipline_UnderRep = paste0('UnderRep_',Discipline)) %>%
   select(-n,-DisciplinePopSize,-Discipline) %>%
   spread(Discipline_UnderRep,UnderRep,fill=0) %>%
@@ -52,7 +53,7 @@ thread_job = data_orig0 %>%
 # Summary stats for text of each thread
 thread_text = data_orig0 %>%
   group_by(ThreadId) %>%
-  summarise_at(.cols = 69:150,
+  summarise_at(.vars = 69:150,
                .funs = c(Min="min",Max="max",Mean="mean")) 
 names(thread_text) = paste0('Thread_Text_',names(thread_text))
 
@@ -88,22 +89,55 @@ data_thread = data_orig0 %>%
     left_join(thread_text, by=c('ThreadId'='Thread_Text_ThreadId'))
 
 ## Measurements at participant population level
+uniquify_contrib = data_orig0 %>%
+  group_by(Id) %>%
+  arrange(desc(PreviousContributions)) %>%
+  filter(row_number()==1)
 
-# Counting participants by discipline overall
-pop_discipline = data_orig0 %>%
+ggplot(uniquify_contrib, aes(reorder(Discipline, Male, sum))) + 
+  geom_bar() +
+  xlab('Discipline') +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+ggplot(uniquify_contrib, aes(reorder(Job_Title_S, Male, sum))) + 
+  geom_bar() +
+  xlab('Job Title') +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+uniquify_thread = data_orig0 %>%
+  group_by(ThreadId) %>%
+  arrange(desc(PreviousContributions)) %>%
+  filter(row_number()==1)
+
+ggplot(uniquify_thread, aes(Year)) + geom_bar()
+
+ggplot(uniquify_thread, aes(DebateSize)) + 
+  geom_histogram(bins = 25)+
+  scale_y_log10() +
+  scale_x_log10()
+
+
+pop_discipline_conf_data = data_orig0 %>%
   group_by(Id) %>%
   arrange(desc(PreviousContributions)) %>%
   filter(row_number()==1) %>%
   ungroup() %>%
   group_by(Discipline) %>%
-  summarize(DisciplinePopSize = n(),
-            FractionFemale = sum(Female,na.rm=TRUE)/sum(Male + Female, na.rm=TRUE)) %>%
-  mutate(DisciplinePopSize = DisciplinePopSize/sum(DisciplinePopSize)) 
+  summarize(DisciplinePopSize = sum(Male + Female, na.rm=TRUE),
+            DisciplineFemSize = sum(Female,na.rm=TRUE)) %>%
+  mutate(DisciplinePopFrac = DisciplinePopSize/sum(DisciplinePopSize)) 
 
-ggplot(pop_discipline, aes(reorder(Discipline,FractionFemale),group=1)) + 
-  geom_bar(aes(y=DisciplinePopSize),stat='identity') +
-  geom_line(aes(y=FractionFemale)) +
-  scale_y_continuous("Discipline Community", 
+pop_discipline_conf0 = binom.confint(pop_discipline_conf_data$DisciplineFemSize,pop_discipline_conf_data$DisciplinePopSize,methods='wilson')[4:6]
+pop_discipline_conf = cbind(as.character(pop_discipline_conf_data$Discipline),pop_discipline_conf_data$DisciplinePopFrac, pop_discipline_conf0)
+names(pop_discipline_conf)[1]='Discipline'
+names(pop_discipline_conf)[2]='DisciplinePopFrac'
+
+ggplot(pop_discipline_conf, aes(reorder(Discipline,mean),group=1)) + 
+  geom_bar(aes(y=DisciplinePopFrac),stat='identity') +
+  geom_line(aes(y=mean)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper)) + 
+  xlab('Discipine') + 
+  scale_y_continuous("Discipline Community Size", 
                      sec.axis = sec_axis(~ ., name = "Fraction Female")) +
   theme(axis.text.x = element_text(angle = 45, hjust=1))
 
@@ -125,10 +159,40 @@ pop_job = data_orig0 %>%
 ggplot(pop_job, aes(reorder(Job_Title_S,FractionFemale),group=1)) + 
   geom_bar(aes(y=JobPopSize),stat='identity') +
   geom_line(aes(y=FractionFemale)) +
+  xlab('Job Title') + 
   scale_y_continuous("Fraction with This Job", 
     sec.axis = sec_axis(~ ., name = "Fraction Female")) +
   theme(axis.text.x = element_text(angle = 45, hjust=1))
 
+pop_job_conf_data = data_orig0 %>%
+  group_by(Id) %>%
+  arrange(desc(PreviousContributions)) %>%
+  filter(row_number()==1) %>%
+  ungroup() %>%
+  mutate(Job_Title_S = ifelse(grepl('Entrepreneur|Management|Founder',Job_Title_S),'Management',
+                              ifelse(grepl('Postdoctoral|Student', Job_Title_S),'Trainee',
+                                     ifelse(grepl('Other|Not Available', Job_Title_S) | Job_Title_S=='','Other',
+                                            Job_Title_S)))) %>%
+  group_by(Job_Title_S) %>%
+  summarize(JobPopSize = sum(Male + Female, na.rm=TRUE),
+            JobFemSize = sum(Female,na.rm=TRUE)) %>%
+  mutate(JobPopFrac = JobPopSize/sum(JobPopSize)) 
+
+pop_job_conf0 = binom.confint(pop_job_conf_data$JobFemSize,pop_job_conf_data$JobPopSize,methods='wilson')[4:6]
+pop_job_conf = cbind(as.character(pop_job_conf_data$Job_Title_S),pop_job_conf_data$JobPopFrac, pop_job_conf0)
+names(pop_job_conf)[1]='JobTitle'
+names(pop_job_conf)[2]='JobPopFrac'
+ggplot(pop_job_conf, aes(reorder(JobTitle,mean),group=1)) + 
+  geom_bar(aes(y=JobPopFrac),stat='identity') +
+  geom_line(aes(y=mean)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper)) +
+  xlab('Job Title') + 
+  scale_y_continuous("Fraction of All Users with This Job", 
+                     sec.axis = sec_axis(~ ., name = "Fraction Female")) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+ggplot(data_orig0, aes(Year,FemaleParticipation)) +
+  stat_summary_bin()
 
 gender_uniquecontrib = data_orig0 %>%
   group_by(ThreadId,Id) %>%
@@ -146,16 +210,26 @@ gender_uniquecontrib = data_orig0 %>%
             TotalUniqueContributions = n(),
             YearsContributing = max(Year)-min(Year)) 
 
+ggplot(filter(gender_uniquecontrib),
+       aes(YearsContributing,TotalUniqueContributions)) +
+  geom_jitter()+ 
+  geom_smooth()
+
+ggplot(filter(gender_uniquecontrib),
+       aes(TotalUniqueContributions)) +
+  geom_bar()
+
 ggplot(filter(gender_uniquecontrib,Discipline==''),
        aes(YearsContributing,TotalUniqueContributions,color = (Female==1))) +
   geom_jitter()+ 
   geom_smooth()
 
 
+
 ggplot(filter(gender_uniquecontrib,Discipline!=''),aes(YearsContributing,TotalUniqueContributions,color = (Female==1))) +
   geom_jitter()+ 
   geom_smooth()+
-  facet_grid(. ~ Discipline)
+  facet_grid(Discipline ~ .)
 
 ggplot(filter(gender_uniquecontrib,YearsContributing<5,!is.na(Female)),aes(Female==1,TotalUniqueContributions)) +
   stat_summary(fun.y = mean, geom = "bar") + 
@@ -200,20 +274,7 @@ data_thread = data_thread %>%
   left_join(thread_to_job, by='ThreadId')
 
 
-# Getting a uniquified view of thread metrics for plotting
-thread_info = data_thread %>% 
-  select(Year,
-         Title,
-         Link,
-         Type,
-         ThreadId,
-         DebateSize,
-         FemaleParticipation,
-         Live,
-         UniqueContributors,
-         UniqueFemaleParticipation,
-         starts_with('Thread_')) %>% 
-  unique()
+
 
 
 
